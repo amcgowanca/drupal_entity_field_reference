@@ -1,0 +1,6 @@
+name = Entity field reference
+description = Provides a field type for referencing fields of a particular entity.
+core = 7.x
+version = 7.x-1.x
+
+dependences[] = entity
