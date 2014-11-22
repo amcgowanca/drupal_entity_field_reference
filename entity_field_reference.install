@@ -1,0 +1,28 @@
+<?php
+/**
+ * @file
+ * entity_field_reference.install
+ */
+
+/**
+ * Implements hook_field_schema().
+ */
+function entity_field_reference_field_schema($field) {
+  $columns = array(
+    'field_name' => array(
+      'type' => 'varchar',
+      'length' => '32',
+      'not null' => TRUE,
+    ),
+  );
+  return array(
+    'columns' => $columns,
+    'indexes' => array('field_name' => array('field_name')),
+    'foreign keys' => array(
+      'field_name' => array(
+        'table' => 'field_config',
+        'columns' => array('field_name' => 'field_name'),
+      ),
+    ),
+  );
+}

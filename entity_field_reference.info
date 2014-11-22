@@ -1,6 +1,6 @@
-name = Entity field reference
-description = Provides a field type for referencing fields of a particular entity.
+name = Entity Field Reference
+description = Provides a field type for referencing field instances of a particular entity and bundle.
 core = 7.x
-version = 7.x-1.x
+version = 7.x-0.1
 
 dependences[] = entity
