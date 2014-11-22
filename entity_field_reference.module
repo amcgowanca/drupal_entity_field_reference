@@ -80,13 +80,6 @@ function entity_field_reference_field_is_empty($item, $field) {
 }
 
 /**
- *
- */
-function entity_field_reference_property_info_callback(&$info, $entity_type, $field, $instance, $field_type) {
-
-}
-
-/**
  * Implements hook_field_settings_form().
  */
 function entity_field_reference_field_settings_form($field, $instance, $has_data) {
