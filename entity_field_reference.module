@@ -44,32 +44,242 @@ function entity_field_reference_field_formatter_info() {
       'description' => t('Renders the label of the selected fields.'),
       'field types' => array('entity_field_reference'),
     ),
+    'entity_field_reference_entity_field_value' => array(
+      'label' => t('Entity field value'),
+      'description' => t('Renders the referenced entity specified by an entity reference field and the selected field values.'),
+      'field types' => array('entity_field_reference'),
+      'settings' => array(
+        'entity_field_name' => '',
+        'entity_field_view_mode' => 'default',
+      ),
+    ),
   );
+}
+
+/**
+ * Implements hook_field_formatter_prepare_view().
+ */
+function entity_field_reference_field_formatter_prepare_view($entity_type, $entities, $field, $instances, $langcode, &$items, $displays) {
+  foreach ($entities as $entity_id => &$entity) {
+    $display = $displays[$entity_id];
+    switch ($display['type']) {
+      case 'entity_field_reference_entity_field_value':
+        $wrapper = entity_metadata_wrapper($entity_type, $entity);
+        $entity_reference_field = $display['settings']['entity_field_name'];
+        if (isset($wrapper->{$entity_reference_field})) {
+          $value = $wrapper->{$entity_reference_field};
+          if (!($value instanceof EntityListWrapper)) {
+            $value = array($value);
+          }
+          $items[$entity_id]['#entity'] = $value;
+        }
+        break;
+    }
+  }
 }
 
 /**
  * Implements hook_field_formatter_view().
  */
 function entity_field_reference_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
-  $element = array();
+  $elements = array();
   switch ($display['type']) {
     case 'entity_field_reference_field_label':
       $labels = array();
+      // TODO: Implement this filtering so that not all data is saved to the db.
+      $field['settings']['target_bundle_fields'] = array_filter($field['settings']['target_bundle_fields']);
       $field_info = field_info_instances($field['settings']['target_type'], $field['settings']['target_bundle']);
       foreach ($items as $delta => $item) {
         if (isset($field_info[$item['field_name']])) {
-          $labels[$item['field_name']] = check_plain($field_info[$item['field_name']]['label']);
+          if (!empty($field['settings']['target_bundle_fields'])) {
+            if (isset($field['settings']['target_bundle_fields'][$items[$delta]['field_name']]) && $field['settings']['target_bundle_fields'][$items[$delta]['field_name']]) {
+              $labels[$item['field_name']] = check_plain($field_info[$item['field_name']]['label']);
+            }
+          }
+          else {
+            $labels[$item['field_name']] = check_plain($field_info[$item['field_name']]['label']);
+          }
         }
       }
 
-      $element += array(
+      $elements += array(
         '#theme' => 'item_list',
         '#type' => 'ul',
         '#items' => $labels,
       );
       break;
+
+    case 'entity_field_reference_entity_field_value':
+      $entity_reference = $items['#entity'];
+      $field['settings']['target_bundle_fields'] = array_filter($field['settings']['target_bundle_fields']);
+      foreach ($entity_reference as $reference) {
+        foreach (element_children($items) as $delta) {
+          if (!empty($field['settings']['target_bundle_fields'])) {
+            if (isset($field['settings']['target_bundle_fields'][$items[$delta]['field_name']]) && $field['settings']['target_bundle_fields'][$items[$delta]['field_name']]) {
+              $element[$delta] = field_view_field($reference->type(), $reference->value(), $items[$delta]['field_name'], $display['settings']['entity_field_view_mode'], $langcode);
+            }
+          }
+          else {
+            $element[$delta] = field_view_field($reference->type(), $reference->value(), $items[$delta]['field_name'], $display['settings']['entity_field_view_mode'], $langcode);
+          }
+        }
+        usort($element, 'element_sort');
+        $elements[] = $element;
+      }
+      break;
   }
-  return $element;
+  return $elements;
+}
+
+/**
+ * Implements hook_field_formatter_settings_summary().
+ */
+function entity_field_reference_field_formatter_settings_summary($field, $instance, $view_mode) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+
+  $summary = '';
+  switch ($display['type']) {
+    case 'entity_field_reference_entity_field_value':
+      $summary_info = array();
+      // TODO: Determine if display value labels is required.
+      $summary_info[] = t('<strong>Entity reference field:</strong> @value', array(
+        '@value' => !empty($settings['entity_field_name']) ? check_plain($settings['entity_field_name']) : t('Not selected')
+      ));
+      $summary_info[] = t('<strong>Entity reference field view mode:</strong> @value', array(
+        '@value' => !empty($settings['entity_field_view_mode']) ? check_plain($settings['entity_field_view_mode']) : t('Default'),
+      ));
+      $summary = theme('item_list', array(
+        'type' => 'ul',
+        'items' => $summary_info,
+      ));
+      break;
+  }
+  return $summary;
+}
+
+/**
+ * Implements hook_field_formatter_settings_form().
+ */
+function entity_field_reference_field_formatter_settings_form($field, $instance, $view_mode, &$form, &$form_state) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+
+  $elements = array();
+  switch ($display['type']) {
+    case 'entity_field_reference_entity_field_value':
+      $form_state_values = array();
+      if (!empty($form_state['values']['fields'][$field['field_name']]['settings_edit_form']['settings'])) {
+        $form_state_values = $form_state['values']['fields'][$field['field_name']]['settings_edit_form']['settings'];
+      }
+
+      // TODO: Add validation for both entity and node reference fields.
+      $entity_reference_fields = array(FALSE => t('Select a field'));
+      foreach (field_info_instances($instance['entity_type'], $instance['bundle']) as $field_name => $field_instance_info) {
+        $field_info = field_info_field_by_id($field_instance_info['field_id']);
+        if ('node_reference' == $field_info['type']) {
+          $entity_reference_fields[$field_name] = t('@label [Field: @field_name]', array(
+            '@label' => $field_instance_info['label'],
+            '@field_name' => $field_name,
+          ));
+        }
+      }
+
+      // Use this particular array to build the `#parents` property of all
+      // elements as relying on the auto population will result in $form_state
+      // values not containing or setting the field formatter settings correctly
+      // because the submit handler heavily relies on non-treed elements.
+      $element_parents = array('fields', $field['field_name'], 'settings_edit_form', 'settings');
+      // Build and compile the ID attribute for the container element allowing
+      // for easily identifying the wrapper via AJAX replacement.
+      $element_container_id = array('edit', 'fields', str_replace('_', '-', $field['field_name']), 'settings', 'edit', 'form', 'settings', 'container');
+      $element_container_id = implode('-', $element_container_id);
+      // Use a container element for wrapping the formatter settings fields
+      // as it allows for an easy rendering and replacement during AJAX calls.
+      $elements['container'] = array(
+        '#type' => 'container',
+        '#field' => $field,
+        '#instance' => $instance,
+        '#attributes' => array('id' => $element_container_id),
+        '#tree' => FALSE,
+      );
+
+      $entity_field_name_value = isset($form_state_values['entity_field_name']) ? $form_state_values['entity_field_name'] : $settings['entity_field_name'];
+      $elements['container']['entity_field_name'] = array(
+        '#type' => 'select',
+        '#title' => t('Entity reference field'),
+        '#description' => t('The field which is referencing the entity.'),
+        '#options' => $entity_reference_fields,
+        '#default_value' => $entity_field_name_value,
+        '#element_validate' => array('_entity_field_reference_field_formatter_setting_entity_ref_field_name_validate'),
+        '#required' => TRUE,
+        '#ajax' => array(
+          'callback' => '_entity_field_reference_field_formatter_setting_ajax',
+          'wrapper' => $element_container_id,
+          'method' => 'replace',
+        ),
+        '#parents' => $element_parents,
+      );
+
+      if ($entity_field_name_value) {
+        $referenced_entity_view_modes = array('default' => t('Default'));
+        $referenced_entity_info = entity_get_info($field['settings']['target_type']);
+        foreach ($referenced_entity_info['view modes'] as $view_mode_name => $view_mode_info) {
+          $referenced_entity_view_modes[$view_mode_name] = $view_mode_info['label'];
+        }
+
+        $entity_field_view_mode_value = isset($form_state_values['entity_field_view_mode']) ? $form_state_values['entity_field_view_mode'] : $settings['entity_field_view_mode'];
+        $elements['container']['entity_field_view_mode'] = array(
+          '#type' => 'select',
+          '#title' => t('Entity reference field view mode'),
+          '#description' => t("The view mode used when rendering the entity's fields. Default value is the default view mode."),
+          '#options' => $referenced_entity_view_modes,
+          '#default_value' => $entity_field_view_mode_value,
+          // '#element_validate' => array(),
+          '#required' => TRUE,
+          '#parents' => $element_parents,
+        );
+      }
+
+      // Append the `$element_name` for each element's #parent.
+      foreach (element_children($elements['container']) as $element_name) {
+        $elements['container'][$element_name]['#parents'][] = $element_name;
+      }
+      break;
+  }
+  return $elements;
+}
+
+/**
+ * Submit handler for non-JS case.
+ *
+ * @see entity_field_reference_field_formatter_settings_form().
+ */
+function _entity_field_reference_field_formatter_settings_ajax_submit($form, &$form_state) {
+  $form_state['rebuild'] = TRUE;
+}
+
+/**
+ * AJAX callback for field formatter settings form.
+ */
+function _entity_field_reference_field_formatter_setting_ajax($form, &$form_state) {
+  $trigger = $form_state['triggering_element'];
+  // Retrieve the trigger element's parents which will allow for us to retrieve
+  // the container element which contains the `#field` definition.
+  $parents = $trigger['#array_parents'];
+  array_pop($parents);
+  $container_element = drupal_array_get_nested_value($form, $parents);
+  // Return the formatter settings form elements specific to this field.
+  return $form['fields'][$container_element['#field']['field_name']]['format']['settings_edit_form']['settings']['container'];
+}
+
+/**
+ * Validation callback for formatter settings form `entity_field_name` field.
+ */
+function _entity_field_reference_field_formatter_setting_entity_ref_field_name_validate($element, &$form_state, $form) {
+  if (empty($element['#value'])) {
+    form_set_error(implode('][', $element['#array_parents']), t('You must select a field.'));
+  }
 }
 
 /**
@@ -144,6 +354,28 @@ function _entity_field_reference_field_settings_form_process($form, $form_state)
       '#required' => TRUE,
       '#description' => t('The bundle type that its fields are referenced through this field.'),
       '#default_value' => !empty($field['settings']['target_bundle']) ? $field['settings']['target_bundle'] : '',
+      '#ajax' => array(
+        'callback' => 'entity_field_reference_field_settings_ajax',
+        'wrapper' => $form['#id'],
+        'element' => $form['#array_parents'],
+      ),
+    );
+  }
+
+  if (!empty($field['settings']['target_bundle'])) {
+    $entity_bundle_fields = array();
+    $field_info = field_info_instances($field['settings']['target_type'], $field['settings']['target_bundle']);
+    foreach ($field_info as $field_name => $info) {
+      $entity_bundle_fields[$field_name] = check_plain($info['label']);
+    }
+
+    $form['target_bundle_fields'] = array(
+      '#type' => 'checkboxes',
+      '#title' => t('Available fields'),
+      '#description' => t('Select the fields that should be available to be referenced. If no fields are selected, all fields will be made available as options.'),
+      '#required' => FALSE,
+      '#default_value' => !empty($field['settings']['target_bundle_fields']) ? $field['settings']['target_bundle_fields'] : array(),
+      '#options' => $entity_bundle_fields,
     );
   }
 
@@ -182,9 +414,33 @@ function entity_field_reference_field_settings_form_ajax_submit($form, &$form_st
 function entity_field_reference_options_list($field, $instance, $entity_type, $entity) {
   $items = array();
   if (!empty($field['settings']['target_type']) && !empty($field['settings']['target_bundle'])) {
-    foreach (field_info_instances($field['settings']['target_type'], $field['settings']['target_bundle']) as $field_name => $field_info) {
+    $available_fields = array();
+    $target_bundle_fields = array_filter($field['settings']['target_bundle_fields']);
+    if (!empty($target_bundle_fields)) {
+      foreach ($target_bundle_fields as $field_name) {
+        $available_fields[$field_name] = field_info_instance($field['settings']['target_type'], $field_name, $field['settings']['target_bundle']);
+      }
+    }
+    else {
+      $available_fields = field_info_instances($field['settings']['target_type'], $field['settings']['target_bundle']);
+    }
+
+    foreach ($available_fields as $field_name => $field_info) {
       $items[$field_name] = check_plain($field_info['label']);
     }
   }
   return $items;
+}
+
+/**
+ * Implements hook_preprocess_field().
+ */
+function entity_field_reference_preprocess_field(&$variables, $hook) {
+  $element = &$variables['element'];
+  if ('entity_field_reference' == $element['#field_type']) {
+    $variables['items'] = array();
+    foreach (element_children($element) as $delta => $item) {
+      $variables['items'][$delta] = $element[$delta];
+    }
+  }
 }

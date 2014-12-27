@@ -3,4 +3,4 @@ description = Provides a field type for referencing field instances of a particu
 core = 7.x
 version = 7.x-0.1
 
-dependences[] = entity
+dependencies[] = entity
