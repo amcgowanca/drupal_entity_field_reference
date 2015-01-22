@@ -4,6 +4,25 @@
  * entity_field_reference.module
  */
 
+if (!function_exists('anon')) { function anon() { } }
+
+/**
+ * Style documentation
+ *
+ * * unformatted / default => <div class="entity-#id"></div>
+ *
+ * html list: subtype: unordered, ordered
+ *
+ * * html table
+ *   => displays each column as the selected fields.
+ *   => displays each row as the entity referenced
+ *
+ * * grid
+ *   => displays group (entity) in a single "block", floated, allowing for
+ *      multiple "blocks" to be displayed in a single row allowing for a grid
+ *      like layout
+ */
+
 /**
  * Implements hook_field_info().
  */
@@ -16,6 +35,14 @@ function entity_field_reference_field_info() {
       'property_type' => 'text',
     ),
   );
+}
+
+/**
+ * Implements hook_field_load().
+ */
+function entity_field_reference_field_load($entity_type, $entities, $field, $instances, $langcode, &$items, $age) {
+  // TODO: Remove if not needed.
+  anon();
 }
 
 /**
@@ -51,6 +78,7 @@ function entity_field_reference_field_formatter_info() {
       'settings' => array(
         'entity_field_name' => '',
         'entity_field_view_mode' => 'default',
+        'style' => 'default',
       ),
     ),
   );
@@ -71,7 +99,11 @@ function entity_field_reference_field_formatter_prepare_view($entity_type, $enti
           if (!($value instanceof EntityListWrapper)) {
             $value = array($value);
           }
-          $items[$entity_id]['#entity'] = $value;
+          $items[$entity_id]['#entities'] = $value;
+
+          $style = isset($display['settings']['style']) ? $display['settings']['style'] : 'default';
+          $items[$entity_id]['#plugins']['style'] = entity_field_reference_get_plugin('style', $style);
+          // $items[$entity_id]['#style'] = new EntityFieldReferenceStylePlugin();
         }
         break;
     }
@@ -110,8 +142,12 @@ function entity_field_reference_field_formatter_view($entity_type, $entity, $fie
       break;
 
     case 'entity_field_reference_entity_field_value':
-      $entity_reference = $items['#entity'];
-      $field['settings']['target_bundle_fields'] = array_filter($field['settings']['target_bundle_fields']);
+      $entity_reference = $items['#entities'];
+      $style_plugin = $items['#plugins']['style'];
+
+      $elements[] = array('#markup' => $style_plugin->render());
+
+      /* $field['settings']['target_bundle_fields'] = array_filter($field['settings']['target_bundle_fields']);
       foreach ($entity_reference as $reference) {
         foreach (element_children($items) as $delta) {
           if (!empty($field['settings']['target_bundle_fields'])) {
@@ -125,7 +161,7 @@ function entity_field_reference_field_formatter_view($entity_type, $entity, $fie
         }
         usort($element, 'element_sort');
         $elements[] = $element;
-      }
+      } */
       break;
   }
   return $elements;
@@ -148,6 +184,9 @@ function entity_field_reference_field_formatter_settings_summary($field, $instan
       ));
       $summary_info[] = t('<strong>Entity reference field view mode:</strong> @value', array(
         '@value' => !empty($settings['entity_field_view_mode']) ? check_plain($settings['entity_field_view_mode']) : t('Default'),
+      ));
+      $summary_info[] = t('<strong>Entity display style:</strong> @value', array(
+        '@value' => !empty($settings['style']) ? check_plain($settings['style']) : t('Default'),
       ));
       $summary = theme('item_list', array(
         'type' => 'ul',
@@ -240,6 +279,22 @@ function entity_field_reference_field_formatter_settings_form($field, $instance,
           '#parents' => $element_parents,
         );
       }
+
+      $style_plugins = entity_field_reference_get_plugin_info('style');
+      $style_options = array();
+      foreach ($style_plugins as $plugin => $plugin_info) {
+        $style_options[$plugin] = $plugin_info['title'];
+      }
+
+      $elements['container']['style'] = array(
+        '#type' => 'select',
+        '#title' => t('Display style'),
+        '#description' => t('The style in which to render the collection of referenced entities.'),
+        '#options' => $style_options,
+        '#default_value' => 'default',
+        '#required' => TRUE,
+        '#parents' => $element_parents,
+      );
 
       // Append the `$element_name` for each element's #parent.
       foreach (element_children($elements['container']) as $element_name) {
@@ -433,14 +488,157 @@ function entity_field_reference_options_list($field, $instance, $entity_type, $e
 }
 
 /**
+ * Implements hook_theme_registry_alter().
+ */
+function entity_field_reference_theme_registry_alter(&$theme_registry) {
+  anon();
+}
+
+/**
+ * Implements hook_theme().
+ */
+function entity_field_reference_theme() {
+  return array(
+    'entity_field_reference_field' => array(
+      'render element' => 'element',
+      'template' => 'field--entity_field_reference',
+      'path' => drupal_get_path('module', 'entity_field_reference') . '/theme',
+    ),
+  );
+}
+
+/**
  * Implements hook_preprocess_field().
  */
 function entity_field_reference_preprocess_field(&$variables, $hook) {
   $element = &$variables['element'];
   if ('entity_field_reference' == $element['#field_type']) {
+    // TODO: This should be a hook to identify which fields to override.
+    if ('entity_field_reference_field_label' != $element['#formatter']) {
+      $variables['theme_hook_suggestions'][] = 'entity_field_reference_field';
+    }
+
+    $items_tmp = $variables['items'];
     $variables['items'] = array();
     foreach (element_children($element) as $delta => $item) {
       $variables['items'][$delta] = $element[$delta];
+
+      $variables['items'][$delta]['#prefix'] = '<div class="some-entity-here-class-here">';
+      $variables['items'][$delta]['#suffix'] = '</div>';
     }
   }
 }
+
+/**
+ * @param $file
+ * @param string $dir
+ */
+function entity_field_reference_include($file, $dir = 'includes') {
+  ctools_include($file, 'entity_field_reference', $dir);
+}
+
+function entity_field_reference_module_include() {
+
+}
+
+function entity_field_reference_ctools_plugin_api_hook_name() {
+  return 'entity_field_reference_api';
+}
+
+function entity_field_reference_api_version() {
+  return '1.0';
+}
+
+function entity_field_reference_entity_field_reference_api() {
+  return array(
+    'api' => entity_field_reference_api_version()
+  );
+}
+
+function entity_field_reference_get_plugin_info($type, $plugin = NULL) {
+  static $static_fast_cache = NULL;
+  if (!$static_fast_cache) {
+    $static_fast_cache = entity_field_reference_discover_plugins();
+  }
+
+  if ($plugin) {
+    return isset($static_fast_cache[$type][$plugin]) ? $static_fast_cache[$type][$plugin] : NULL;
+  }
+
+  return isset($static_fast_cache[$type]) ? $static_fast_cache[$type] : NULL;
+}
+
+function entity_field_reference_get_plugin($type, $plugin) {
+  $info = entity_field_reference_get_plugin_info($type, $plugin);
+  if (!empty($info)) {
+    return _entity_field_reference_create_plugin_instance($info);
+  }
+  return NULL;
+}
+
+function entity_field_reference_discover_plugins() {
+  static $static_fast_cache = NULL;
+  if (!$static_fast_cache) {
+    $static_fast_cache = array('style' => array());
+
+    entity_field_reference_include('plugins');
+
+    foreach (module_implements('entity_field_reference_plugins') as $module) {
+      $function = $module . '_entity_field_reference_plugins';
+      $result = $function();
+      if (!is_array($result)) {
+        continue;
+      }
+
+      $module_dir = isset($result['module']) ? $result['module'] : $module;
+      foreach ($result as $type => $info) {
+        if ('module' == $type) {
+          continue;
+        }
+
+        $path = drupal_get_path('module', $module_dir) . '/plugins/' . $type . '/';
+
+        foreach ($info as $plugin => $def) {
+          if (!isset($def['path'])) {
+            $def['path'] = $path;
+          }
+
+          if (!isset($def['file'])) {
+            $def['file'] = $def['class name'] . '.inc';
+          }
+
+          $def['name'] = $plugin;
+          $static_fast_cache[$type][$plugin] = $def;
+        }
+      }
+    }
+    drupal_alter('entity_field_reference_plugins', $static_fast_cache);
+  }
+  return $static_fast_cache;
+}
+
+function _entity_field_reference_create_plugin_instance(array $plugin_info) {
+  if (empty($plugin_info)) {
+    throw new Exception(t('Entity field reference: Create plugin instance plugin information empty.'));
+  }
+
+  if (!class_exists($plugin_info['class name'])) {
+    if (!file_exists($plugin_info['path'] . $plugin_info['file'])) {
+      throw new Exception();
+    }
+
+    $filepath = $plugin_info['path'] . $plugin_info['file'];
+
+    include_once $plugin_info['path'] . 'EntityFieldReferenceStylePlugin.inc';
+    include_once $filepath;
+
+    if (!class_exists($plugin_info['class name'])) {
+      throw new Exception();
+    }
+  }
+
+  $reflection = new ReflectionClass($plugin_info['class name']);
+  $instance = $reflection->newInstance();
+  return $instance;
+}
+
